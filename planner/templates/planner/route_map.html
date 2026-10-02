@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fuel Route Planner</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <style>
+    :root {
+      --bg: #fff; --text: #1d1d1f; --muted: #6b6b70; --border: #e4e4e7; --hover: #f4f4f5;
+      --route: #2563eb; --stop: #059669; --start: #2563eb; --finish: #dc2626; --total: #047857;
+      --error-bg: #fef2f2; --error: #b91c1c;
+      --detour: #ea580c; --detour-bg: #fff7ed; --detour-text: #9a3412;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; display: flex; height: 100vh;
+           background: var(--bg); color: var(--text); }
+    #map { flex: 1; background: #e8e8e8; }
+    .muted-tiles { filter: grayscale(1) brightness(1.06) contrast(0.85); }
+    aside { width: 360px; overflow-y: auto; border-right: 1px solid var(--border); background: var(--bg); }
+    .summary { padding: 14px 16px 12px; border-bottom: 1px solid var(--border); }
+    h1 { font-size: 17px; margin: 0 0 4px; }
+    .total { font-size: 30px; font-weight: 700; color: var(--total); margin: 10px 0 2px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .stop { display: flex; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border);
+            font-size: 14px; cursor: pointer; }
+    .stop:hover, .stop.active { background: var(--hover); }
+    .num { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--stop); color: #fff;
+           font: 600 12px/26px system-ui, sans-serif; text-align: center; }
+    .stop .cost { font-weight: 600; }
+    .stop-body { flex: 1; min-width: 0; }
+
+    /* detours (shown separately, not added to the total) */
+    .detour-card { margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--detour); border-radius: 8px;
+                   background: var(--detour-bg); }
+    .detour-head { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+                   font-size: 13px; font-weight: 700; color: var(--detour-text); }
+    .tag { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: #fff;
+           border: 1px solid var(--detour); color: var(--detour-text); white-space: nowrap; }
+    .detour-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0 6px; }
+    .detour-grid div { display: flex; flex-direction: column; }
+    .detour-grid b { font-size: 15px; color: var(--text); }
+    .detour-grid span { font-size: 11px; color: var(--muted); }
+    .small { font-size: 12px; line-height: 1.4; }
+    .detour-line { margin-top: 6px; padding: 5px 8px; border-radius: 6px; background: var(--detour-bg);
+                   border-left: 3px solid var(--detour); font-size: 12px; color: var(--detour-text); }
+    .detour-line.none { border-left-color: var(--border); background: var(--hover); color: var(--muted); }
+    .detour-icon { font-weight: 700; }
+
+    /* trip form */
+    .planner { padding: 16px; border-bottom: 1px solid var(--border); background: #fafafa;
+               position: sticky; top: 0; z-index: 1; }
+    .planner .title { font-size: 15px; font-weight: 700; margin: 0 0 10px; }
+    .fields { display: grid; grid-template-columns: 1fr auto; gap: 6px 8px; align-items: center; }
+    .fields label { grid-column: 1 / -1; font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 2px; }
+    .field { position: relative; grid-column: 1; }
+    .field .dot { position: absolute; left: 10px; top: 50%; width: 10px; height: 10px; margin-top: -5px;
+                  border-radius: 50%; }
+    .field input { width: 100%; padding: 9px 10px 9px 28px; font: 14px system-ui, sans-serif; color: var(--text);
+                   border: 1px solid #d4d4d8; border-radius: 8px; background: #fff; }
+    .field input:focus { outline: 2px solid var(--route); outline-offset: -1px; border-color: transparent; }
+    .swap { grid-column: 2; grid-row: 2 / span 3; width: 32px; height: 32px; border: 1px solid #d4d4d8;
+            border-radius: 50%; background: #fff; cursor: pointer; font-size: 16px; color: var(--muted); }
+    .swap:hover { background: var(--hover); color: var(--text); }
+    .go { width: 100%; margin-top: 12px; padding: 10px; border: 0; border-radius: 8px; background: var(--route);
+          color: #fff; font: 600 14px system-ui, sans-serif; cursor: pointer; }
+    .go:hover { background: #1d4ed8; }
+    .go:disabled { background: #93c5fd; cursor: wait; }
+    .examples { margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.9; }
+    .examples a { display: inline-block; padding: 1px 8px; margin: 0 2px 0 0; border: 1px solid var(--border);
+                  border-radius: 999px; color: var(--text); text-decoration: none; background: #fff; }
+    .examples a:hover { border-color: var(--route); color: var(--route); }
+    .error-box { margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--error-bg);
+                 color: var(--error); font-size: 13px; line-height: 1.4; }
+    .hint { padding: 16px; font-size: 13px; color: var(--muted); line-height: 1.6; }
+    .hint code { background: var(--hover); padding: 1px 5px; border-radius: 4px; color: var(--text); }
+
+    /* map markers */
+    .pin { border-radius: 50%; color: #fff; text-align: center; font: 700 12px system-ui, sans-serif;
+           border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.45); }
+    .pin.stop-pin { background: var(--stop); width: 26px; height: 26px; line-height: 22px; }
+    .pin.end-pin { width: 30px; height: 30px; line-height: 26px; font-size: 14px; }
+    .pin.start { background: var(--start); }
+    .pin.finish { background: var(--finish); }
+    .pin.active { transform: scale(1.3); box-shadow: 0 0 0 4px rgba(5,150,105,.35); }
+    .leaflet-popup-content { font-size: 13px; line-height: 1.45; }
+    .legend, .fit-btn { background: #fff; border-radius: 6px; box-shadow: 0 1px 5px rgba(0,0,0,.3);
+                        font: 12px system-ui, sans-serif; color: #1d1d1f; }
+    .legend { padding: 8px 10px; }
+    .legend div { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+    .swatch { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+    .gradient { width: 90px; height: 8px; border-radius: 4px;
+                background: linear-gradient(90deg, #16a34a, #eab308, #dc2626); }
+    .fit-btn { padding: 6px 10px; border: 0; cursor: pointer; font-weight: 600; }
+    .fit-btn:hover { background: #f4f4f5; }
+
+    @media (max-width: 700px) {
+      body { flex-direction: column-reverse; }
+      aside { width: 100%; height: 50vh; border-right: 0; border-top: 1px solid var(--border); }
+      .planner { position: static; }
+    }
+  </style>
+</head>
+<body>
+  <aside>
+    <form class="planner" method="get" action="">
+      <p class="title">Fuel Route Planner</p>
+      <div class="fields">
+        <label for="start">Start</label>
+        <div class="field">
+          <span class="dot" style="background: var(--start)"></span>
+          <input id="start" name="start" value="{{ start }}" placeholder="e.g. Chicago, IL" required autocomplete="off">
+        </div>
+        <button type="button" class="swap" id="swap" title="Swap start and finish" aria-label="Swap start and finish">&#8645;</button>
+        <label for="finish">Finish</label>
+        <div class="field">
+          <span class="dot" style="background: var(--finish)"></span>
+          <input id="finish" name="finish" value="{{ finish }}" placeholder="e.g. Dallas, TX" required autocomplete="off">
+        </div>
+      </div>
+      <button type="submit" class="go" id="go">Plan route</button>
+      <div class="examples">Try:
+        {% for ex in examples %}<a href="?start={{ ex.start|urlencode }}&amp;finish={{ ex.finish|urlencode }}">{{ ex.label }}</a>{% endfor %}
+      </div>
+      {% if error %}<div class="error-box" role="alert"><strong>Could not plan this trip.</strong> {{ error }}</div>{% endif %}
+    </form>
+
+    {% if plan %}
+      <div class="summary">
+        <h1>{{ plan.start.label }} &rarr; {{ plan.finish.label }}</h1>
+        <div class="muted">{{ plan.route.distance_miles }} mi &middot; {{ plan.route.duration_hours }} h driving</div>
+        <div class="total">${{ plan.summary.total_fuel_cost }}</div>
+        <div class="muted">{{ plan.summary.total_gallons }} gal &middot; {{ plan.summary.number_of_stops }} stops &middot;
+          avg ${{ plan.summary.average_price_per_gallon }}/gal</div>
+        {% with d=plan.detour_estimate %}
+        <div class="detour-card">
+          <div class="detour-head">
+            <span>Detours to stations</span><span class="tag">not included in total</span>
+          </div>
+          <div class="detour-grid">
+            <div><b>{{ d.round_trip_miles }} mi</b><span>off route &amp; back</span></div>
+            <div><b>{{ d.gallons }} gal</b><span>extra fuel</span></div>
+            <div><b>+${{ d.cost }}</b><span>extra cost</span></div>
+          </div>
+          <div class="muted small">With detours the trip would cost about <b>${{ d.total_fuel_cost_with_detours }}</b>.
+            Straight-line estimate: stations are placed at their city centre.</div>
+        </div>
+        {% endwith %}
+      </div>
+      {% for s in plan.fuel_stops %}
+        <div class="stop" data-seq="{{ s.sequence }}">
+          <div class="num">{{ s.sequence }}</div>
+          <div class="stop-body">
+            <strong>{{ s.name }}</strong><br>
+            <span class="muted">{{ s.city }}, {{ s.state }} &middot; mile {{ s.mile_marker }}</span><br>
+            ${{ s.price_per_gallon }}/gal &middot; {{ s.gallons }} gal &middot; <span class="cost">${{ s.cost }}</span>
+            {% if s.detour.round_trip_miles %}
+              <div class="detour-line" title="Not included in the trip total">
+                <span class="detour-icon">&#8618;</span>
+                {{ s.detour.one_way_miles }} mi off route &rarr; {{ s.detour.round_trip_miles }} mi there &amp; back
+                &middot; +{{ s.detour.gallons }} gal &middot; <b>+${{ s.detour.cost }}</b>
+              </div>
+            {% else %}
+              <div class="detour-line none">On the route &middot; no detour</div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    {% elif not error %}
+      <div class="hint">
+        Enter any two places in the USA. You can type:<br>
+        &bull; a city: <code>Chicago, IL</code> or <code>Austin, Texas</code><br>
+        &bull; coordinates: <code>41.88,-87.63</code><br>
+        &bull; a street address: <code>1600 Pennsylvania Ave, Washington DC</code><br><br>
+        The planner finds the cheapest places to buy fuel for a truck with a 500-mile range at 10 MPG.
+        Grey dots on the map are all {{ stations|length }} fuel stations.
+      </div>
+    {% endif %}
+  </aside>
+  <div id="map"></div>
+  {% if plan %}{{ plan.geojson|json_script:"plan-geojson" }}{% endif %}
+  {{ stations|json_script:"all-stations" }}
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script>
+    const form = document.querySelector(".planner");
+    const startInput = document.getElementById("start"), finishInput = document.getElementById("finish");
+    document.getElementById("swap").addEventListener("click", () => {
+      [startInput.value, finishInput.value] = [finishInput.value, startInput.value];
+    });
+    form.addEventListener("submit", () => {
+      const go = document.getElementById("go");
+      go.disabled = true;
+      go.textContent = "Planning route…";
+    });
+    // back button restores the page with the button still disabled
+    window.addEventListener("pageshow", () => {
+      const go = document.getElementById("go");
+      go.disabled = false;
+      go.textContent = "Plan route";
+    });
+    if (!startInput.value) startInput.focus();
+
+    const planEl = document.getElementById("plan-geojson");
+    const data = planEl ? JSON.parse(planEl.textContent) : null;
+    // rows: [lat, lng, price, name, city, state, route_mile | null]
+    const stations = JSON.parse(document.getElementById("all-stations").textContent);
+    const narrow = matchMedia("(max-width: 700px)").matches;
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+    const map = L.map("map", {
+      preferCanvas: true,  // ~6.6k station dots
+      zoomControl: false,
+      zoomSnap: 0.25, zoomDelta: 0.5, wheelPxPerZoomLevel: 120,
+      minZoom: 3, worldCopyJump: true,
+    });
+    L.control.zoom({ position: "topright" }).addTo(map);
+    L.control.scale({ imperial: true, metric: false, position: "bottomright" }).addTo(map);
+
+    // OSM blocks tiles without a Referer, and Django's default Referrer-Policy removes it
+    const tileUrl = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+    const tileOpts = {
+      maxZoom: 19, referrerPolicy: "strict-origin-when-cross-origin",
+      attribution: "&copy; OpenStreetMap contributors",
+    };
+    // greyed out version of the same tiles so the route stands out
+    const muted = L.tileLayer(tileUrl, { ...tileOpts, className: "muted-tiles" }).addTo(map);
+    const osm = L.tileLayer(tileUrl, tileOpts);
+
+    const onRoute = stations.filter(s => s[6] !== null);
+    const prices = onRoute.map(s => s[2]);
+    const minP = Math.min(...prices), maxP = Math.max(...prices);
+    const priceColour = p => {
+      const t = maxP > minP ? (p - minP) / (maxP - minP) : 0;
+      const stops = [[22, 163, 74], [234, 179, 8], [220, 38, 38]];  // green -> amber -> red
+      const [a, b, u] = t < 0.5 ? [stops[0], stops[1], t * 2] : [stops[1], stops[2], (t - 0.5) * 2];
+      return `rgb(${a.map((c, i) => Math.round(c + (b[i] - c) * u)).join(",")})`;
+    };
+    const stationPopup = s =>
+      `<b>${esc(s[3])}</b><br>${esc(s[4])}, ${esc(s[5])}<br>$${s[2].toFixed(3)}/gal` +
+      (s[6] !== null ? ` &middot; route mile ${s[6]}` : "");
+
+    const otherLayer = L.layerGroup(stations.filter(s => s[6] === null).map(s =>
+      L.circleMarker([s[0], s[1]], { radius: 2.5, stroke: false, fillColor: "#71717a", fillOpacity: 0.45 })
+        .bindPopup(stationPopup(s))
+    )).addTo(map);
+
+    const Legend = L.Control.extend({
+      onAdd() {
+        const el = L.DomUtil.create("div", "legend");
+        el.innerHTML = data ? `
+          <div><span class="swatch" style="background:#2563eb"></span>Start (A) &nbsp;
+               <span class="swatch" style="background:#dc2626"></span>Finish (B)</div>
+          <div><span class="swatch" style="background:#059669"></span>Fuel stop used</div>
+          <div><span style="width:22px;border-top:3px dashed #ea580c"></span>Detour to stop (not in total)</div>
+          <div><span class="gradient"></span>On the way: $${minP.toFixed(2)} &ndash; $${maxP.toFixed(2)}</div>
+          <div><span class="swatch" style="background:#71717a;opacity:.6"></span>Other stations</div>`
+          : `<div><span class="swatch" style="background:#71717a;opacity:.6"></span>Fuel station (click for price)</div>`;
+        return el;
+      },
+    });
+    new Legend({ position: "bottomleft" }).addTo(map);
+
+    if (data) {
+      drawPlan(data);
+    } else {
+      map.fitBounds([[24.5, -124.8], [49.4, -66.9]], { padding: [20, 20], animate: false });  // contiguous US
+      L.control.layers({ "Muted map": muted, "Full-colour map": osm }, { "Fuel stations": otherLayer },
+                       { position: "topright", collapsed: narrow }).addTo(map);
+    }
+    new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById("map"));
+
+    // closest point on the route line to pt
+    function nearestOnRoute(pt, line) {
+      const k = Math.cos(pt[0] * Math.PI / 180);
+      let best = line[0], bestD = Infinity;
+      for (let i = 0; i < line.length - 1; i++) {
+        const [ay, ax] = line[i], [by, bx] = line[i + 1];
+        const dx = (bx - ax) * k, dy = by - ay;
+        const len = dx * dx + dy * dy;
+        const t = len ? Math.max(0, Math.min(1, (((pt[1] - ax) * k) * dx + (pt[0] - ay) * dy) / len)) : 0;
+        const qy = ay + t * dy, qx = ax + t * (bx - ax);
+        const d = ((pt[1] - qx) * k) ** 2 + (pt[0] - qy) ** 2;
+        if (d < bestD) { bestD = d; best = [qy, qx]; }
+      }
+      return best;
+    }
+
+    function drawPlan(data) {
+      const features = data.features;
+      const routeFeature = features.find(f => f.properties.kind === "route");
+      const stopFeatures = features.filter(f => f.properties.kind === "fuel_stop");
+
+      // white line underneath so the blue route is visible on any background
+      const routeLatLngs = routeFeature.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+      const routeLayer = L.layerGroup([
+        L.polyline(routeLatLngs, { color: "#fff", weight: 9, opacity: 0.9 }),
+        L.polyline(routeLatLngs, { color: "#2563eb", weight: 5 }),
+      ]).addTo(map);
+
+      const corridorLayer = L.layerGroup(onRoute.map(s =>
+        L.circleMarker([s[0], s[1]], { radius: 5, color: "#fff", weight: 1, fillColor: priceColour(s[2]), fillOpacity: 0.95 })
+          .bindPopup(stationPopup(s))
+      )).addTo(map);
+
+      const pin = (cls, label, size) => L.divIcon({
+        className: "", html: `<div class="pin ${cls}">${label}</div>`, iconSize: [size, size], iconAnchor: [size / 2, size / 2],
+      });
+      const stopMarkers = {};
+      const stopLayer = L.layerGroup(stopFeatures.map(f => {
+        const p = f.properties;
+        const d = p.detour;
+        const m = L.marker([p.latitude, p.longitude], { icon: pin("stop-pin", p.sequence, 26), zIndexOffset: 1000 })
+          .bindPopup(`<b>Stop ${p.sequence}: ${esc(p.name)}</b><br>${esc(p.city)}, ${esc(p.state)} &middot; mile ${p.mile_marker}` +
+                     `<br>$${p.price_per_gallon}/gal &middot; ${p.gallons} gal &middot; <b>$${p.cost}</b>` +
+                     (d.round_trip_miles ? `<br><span style="color:#9a3412">&#8618; Detour ${d.round_trip_miles} mi there &amp; back ` +
+                                           `&middot; +$${d.cost} (not in total)</span>` : ""));
+        m.on("popupopen", () => highlight(p.sequence)).on("popupclose", () => highlight(null));
+        stopMarkers[p.sequence] = m;
+        return m;
+      })).addTo(map);
+
+      // dashed line from the route to each stop
+      const detourLayer = L.layerGroup(stopFeatures.filter(f => f.properties.detour.round_trip_miles > 0).map(f => {
+        const p = f.properties;
+        const exit = nearestOnRoute([p.latitude, p.longitude], routeLatLngs);
+        return L.layerGroup([
+          L.polyline([exit, [p.latitude, p.longitude]], { color: "#fff", weight: 6, opacity: 0.9 }),
+          L.polyline([exit, [p.latitude, p.longitude]], { color: "#ea580c", weight: 3, dashArray: "6 6" })
+            .bindTooltip(`Detour ${p.detour.one_way_miles} mi each way &middot; +$${p.detour.cost}`, { sticky: true }),
+          L.circleMarker(exit, { radius: 4, color: "#ea580c", weight: 2, fillColor: "#fff", fillOpacity: 1 }),
+        ]);
+      })).addTo(map);
+      for (const kind of ["start", "finish"]) {
+        const f = features.find(f => f.properties.kind === kind);
+        const [lng, lat] = f.geometry.coordinates;
+        L.marker([lat, lng], {
+          icon: pin(`end-pin ${kind}`, kind === "start" ? "A" : "B", 30), zIndexOffset: 2000,
+        }).bindPopup(`<b>${kind === "start" ? "Start" : "Finish"}</b><br>${esc(f.properties.label)}`)
+          .addTo(stopLayer);
+      }
+
+      L.control.layers(
+        { "Muted map": muted, "Full-colour map": osm },
+        {
+          "Route": routeLayer,
+          "Fuel stops used": stopLayer,
+          "Detours to stops": detourLayer,
+          [`Stations on the way (${onRoute.length})`]: corridorLayer,
+          [`Other stations (${stations.length - onRoute.length})`]: otherLayer,
+        },
+        { position: "topright", collapsed: narrow },
+      ).addTo(map);
+
+      const routeBounds = L.latLngBounds(routeLatLngs);
+      const fitRoute = (animate = true) => map.fitBounds(routeBounds, { padding: [40, 40], animate });
+      const FitButton = L.Control.extend({
+        onAdd() {
+          const btn = L.DomUtil.create("button", "fit-btn");
+          btn.textContent = "Fit route";
+          L.DomEvent.disableClickPropagation(btn);
+          btn.onclick = () => fitRoute();
+          return btn;
+        },
+      });
+      new FitButton({ position: "topright" }).addTo(map);
+
+      // clicking a stop in the list opens it on the map
+      function highlight(seq) {
+        document.querySelectorAll(".stop").forEach(el => el.classList.toggle("active", el.dataset.seq == seq));
+        Object.entries(stopMarkers).forEach(([s, m]) => m.getElement()?.firstChild.classList.toggle("active", s == seq));
+        if (seq) document.querySelector(`.stop[data-seq="${seq}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+      document.querySelectorAll(".stop").forEach(el => el.addEventListener("click", () => {
+        const m = stopMarkers[el.dataset.seq];
+        map.flyTo(m.getLatLng(), Math.max(map.getZoom(), 10), { duration: 0.8 });
+        map.once("moveend", () => m.openPopup());
+      }));
+
+      fitRoute(false);
+    }
+  </script>
+</body>
+</html>

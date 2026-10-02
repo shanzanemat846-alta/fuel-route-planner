@@ -1,0 +1,70 @@
+{
+  "info": {
+    "name": "Fuel Route Planner",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [{ "key": "base_url", "value": "http://127.0.0.1:8000" }],
+  "item": [
+    {
+      "name": "Health",
+      "request": { "method": "GET", "url": "{{base_url}}/api/v1/health/" }
+    },
+    {
+      "name": "Plan route (GET) - New York to Los Angeles",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/api/v1/route/?start=New York, NY&finish=Los Angeles, CA",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "route", ""],
+          "query": [
+            { "key": "start", "value": "New York, NY" },
+            { "key": "finish", "value": "Los Angeles, CA" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Plan route (POST) - lat,lng input, no geometry",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"start\": \"41.8781,-87.6298\",\n  \"finish\": \"Houston, TX\",\n  \"include_geometry\": false\n}"
+        },
+        "url": "{{base_url}}/api/v1/route/"
+      }
+    },
+    {
+      "name": "Error - location outside USA",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/api/v1/route/?start=Toronto, ON, Canada&finish=Chicago, IL",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "route", ""],
+          "query": [
+            { "key": "start", "value": "Toronto, ON, Canada" },
+            { "key": "finish", "value": "Chicago, IL" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Map (open in browser)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/api/v1/route/map/?start=New York, NY&finish=Los Angeles, CA",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "route", "map", ""],
+          "query": [
+            { "key": "start", "value": "New York, NY" },
+            { "key": "finish", "value": "Los Angeles, CA" }
+          ]
+        }
+      }
+    }
+  ]
+}
